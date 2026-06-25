@@ -38,6 +38,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.Trace;
+import android.util.Log;
 import android.view.Surface;
 
 import com.android.internal.camera.flags.Flags;
@@ -1292,13 +1293,19 @@ public class ImageReader implements AutoCloseable {
             return nativeGetHardwareBuffer();
         }
 
-        // OnePlus camera (APS) extension: returns a HardwareBuffer whose native object is an
-        // sp<GraphicBuffer> holder (the layout APS expects for the picture_metadata stream),
-        // not an AHardwareBuffer. The OnePlus camera SDK calls this reflectively; without it
-        // the SDK falls back to getHardwareBuffer() and APS reads a malformed metadata size.
+        /**
+         * OnePlus camera (APS) extension. Returns a {@link HardwareBuffer} with no
+         * NativeAllocationRegistry GC cleaner (its lifetime is owned by close()/finalize()),
+         * unlike {@link #getHardwareBuffer()}. The OnePlus camera SDK calls this reflectively;
+         * without it the SDK falls back to getHardwareBuffer(), whose GC-managed buffer can be
+         * freed while APS still holds a raw pointer to it during hold-to-record (use-after-free).
+         */
         public HardwareBuffer getOplusHardwareBuffer() {
             throwISEIfImageIsInvalid();
-            return nativeGetOplusHardwareBuffer();
+            HardwareBuffer hb = nativeGetOplusHardwareBuffer();
+            Log.i("ImageReader", "getOplusHardwareBuffer() -> " + hb
+                    + " (no-cleaner; APS-owned lifetime)");
+            return hb;
         }
 
         @Override

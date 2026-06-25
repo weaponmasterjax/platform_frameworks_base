@@ -1016,12 +1016,12 @@ static jobject Image_getHardwareBuffer(JNIEnv* env, jobject thiz) {
     return android_hardware_HardwareBuffer_createFromAHardwareBuffer(env, b);
 }
 
-// OnePlus camera (APS) extension. Mirrors stock libandroid_runtime's
-// nativeGetOplusHardwareBuffer: hands back a HardwareBuffer whose native object is a
-// heap-allocated sp<GraphicBuffer> holder (NOT an AHardwareBuffer*), constructed via the
-// HardwareBuffer(long, boolean) ctor which skips AHardwareBuffer-based size/finalizer setup.
-// The OnePlus camera SDK reads mNativeObject expecting this sp<GraphicBuffer> layout; the
-// standard getHardwareBuffer() layout makes APS read a malformed camera_metadata size.
+// OnePlus camera (APS) extension. The OnePlus camera SDK reflectively calls
+// ImageReader$SurfaceImage.getOplusHardwareBuffer(); if it is absent the SDK falls back to the
+// standard getHardwareBuffer(), whose HardwareBuffer carries a NativeAllocationRegistry GC
+// cleaner. APS holds a raw pointer to the buffer across async frames during hold-to-record, so
+// the GC can free it mid-use -> use-after-free. This variant returns a HardwareBuffer with no
+// cleaner (lifetime owned by close()/finalize()), matching stock OnePlus behavior.
 static jobject Image_getOplusHardwareBuffer(JNIEnv* env, jobject thiz) {
     BufferItem* buffer = Image_getBufferItem(env, thiz);
     if (buffer == nullptr || buffer->mGraphicBuffer == nullptr) {
@@ -1029,17 +1029,9 @@ static jobject Image_getOplusHardwareBuffer(JNIEnv* env, jobject thiz) {
                 "Image is not initialized");
         return NULL;
     }
-    static jclass sHbClass = nullptr;
-    static jmethodID sHbHolderCtor = nullptr;
-    if (sHbClass == nullptr) {
-        jclass c = env->FindClass("android/hardware/HardwareBuffer");
-        sHbClass = (jclass) env->NewGlobalRef(c);
-        sHbHolderCtor = env->GetMethodID(sHbClass, "<init>", "(JZ)V");
-    }
-    // Strong-ref'd holder; lifetime owned by the OnePlus APS side (matches stock behavior).
-    sp<GraphicBuffer>* holder = new sp<GraphicBuffer>(buffer->mGraphicBuffer);
-    return env->NewObject(sHbClass, sHbHolderCtor,
-            reinterpret_cast<jlong>(holder), JNI_TRUE);
+    ALOGI("getOplusHardwareBuffer: GraphicBuffer=%p (id=%" PRIu64 ") -> no-cleaner HardwareBuffer",
+          buffer->mGraphicBuffer.get(), buffer->mGraphicBuffer->getId());
+    return android_hardware_HardwareBuffer_createOplusFromGraphicBuffer(env, buffer->mGraphicBuffer);
 }
 #endif
 

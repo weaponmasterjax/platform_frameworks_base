@@ -403,14 +403,18 @@ public final class HardwareBuffer implements Parcelable, AutoCloseable {
     }
 
     /**
-     * Private use only. Called from JNI (ImageReader$SurfaceImage#nativeGetOplusHardwareBuffer)
-     * with a native object that is an {@code sp<GraphicBuffer>} holder rather than an
-     * {@code AHardwareBuffer}. Mirrors the stock OnePlus framework's {@code (JZ)V} constructor:
-     * it intentionally skips nEstimateSize()/registerNativeAllocation(), which assume an
-     * AHardwareBuffer; the native holder's lifetime is managed by the OnePlus camera (APS) side.
-     * The boolean argument only selects this overload.
+     * Private use only. Called from JNI
+     * (ImageReader$SurfaceImage#nativeGetOplusHardwareBuffer) for the OnePlus camera (APS)
+     * pipeline. No-cleaner variant of {@link #HardwareBuffer(long)}: it intentionally does
+     * NOT register a {@link NativeAllocationRegistry} cleaner. The native object is a
+     * GraphicBufferWrapper whose buffer is shared with APS, which keeps a raw pointer to it
+     * across async frames; an eager GC cleaner could free it mid-use (the hold-to-record
+     * use-after-free). Instead the buffer is freed deterministically in {@link #close()} /
+     * {@link #finalize()} via the native finalizer. Mirrors the stock OnePlus framework's
+     * {@code HardwareBuffer(long, boolean)} constructor; the boolean only selects this overload
+     * and leaves {@link #mCleaner} {@code null}.
      */
-    private HardwareBuffer(long nativeObject, boolean isGraphicBufferHolder) {
+    private HardwareBuffer(long nativeObject, boolean isOplusLogic) {
         mNativeObject = nativeObject;
         mCloseGuard.open("HardwareBuffer.close");
     }
@@ -536,13 +540,17 @@ public final class HardwareBuffer implements Parcelable, AutoCloseable {
     public void close() {
         if (!isClosed()) {
             mCloseGuard.close();
-            mNativeObject = 0;
-            // mCleaner is null for buffers created via the HardwareBuffer(long, boolean)
-            // ctor (OnePlus sp<GraphicBuffer> holder); their native lifetime is owned by
-            // the caller, so there is nothing to free here.
             if (mCleaner != null) {
+                // Standard path: the NativeAllocationRegistry cleaner owns the native object.
+                mNativeObject = 0;
                 mCleaner.run();
                 mCleaner = null;
+            } else {
+                // OnePlus getOplusHardwareBuffer() no-cleaner path: no cleaner was registered,
+                // so free the native object directly via the same finalizer the registry would
+                // have used. Mirrors stock OnePlus HardwareBuffer.close().
+                NativeAllocationRegistry.applyFreeFunction(nGetNativeFinalizer(), mNativeObject);
+                mNativeObject = 0;
             }
         }
     }
