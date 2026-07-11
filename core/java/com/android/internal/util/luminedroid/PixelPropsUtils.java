@@ -134,7 +134,8 @@ public final class PixelPropsUtils {
             "com.nothing.smartcenter",
             "com.realme.link",
             "in.startv.hotstar",
-            "jp.id_credit_sp2.android"
+            "jp.id_credit_sp2.android",
+            "com.zhongan.ibank"
     ));
 
     private static final Set<String> customGoogleCameraPackages = new HashSet<>(Arrays.asList(
